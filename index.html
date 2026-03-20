@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Alzheimer's Disease Detection</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+    <div class="container">
+
+        <header>
+            <h1>🧠 Alzheimer's Disease Detection</h1>
+            <p>AI-powered analysis with explainability</p>
+            <div style="margin-top: 15px; display: flex; gap: 10px; justify-content: center; flex-wrap: wrap;">
+                <a href="metrics.html" style="display: inline-block; padding: 10px 20px; background: rgba(0, 234, 255, 0.2); border: 1px solid #00eaff; border-radius: 20px; color: #00eaff; text-decoration: none; font-size: 0.9rem; transition: all 0.3s ease;">📊 View Model Performance Metrics</a>
+                <button type="button" onclick="showHistory(); return false;" style="padding: 10px 20px; background: rgba(0, 234, 255, 0.2); border: 1px solid #00eaff; border-radius: 20px; color: #00eaff; font-size: 0.9rem; cursor: pointer; transition: all 0.3s ease; width: auto;">📜 View History</button>
+            </div>
+        </header>
+
+        <form id="uploadForm">
+
+            <div class="card">
+                <h2>Patient Details</h2>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="patientName">Patient Name *</label>
+                        <input type="text" id="patientName" name="patientName" placeholder="Enter full name" required minlength="2" maxlength="100">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="patientId">Patient ID</label>
+                        <input type="text" id="patientId" name="patientId" placeholder="e.g., P12345" maxlength="20">
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="age">Age *</label>
+                        <input type="number" id="age" name="age" placeholder="Age" required min="1" max="120">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="gender">Gender *</label>
+                        <select id="gender" name="gender" required>
+                            <option value="">Select Gender</option>
+                            <option value="male">Male</option>
+                            <option value="female">Female</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="contactNumber">Contact Number</label>
+                        <input type="tel" id="contactNumber" name="contactNumber" placeholder="e.g., +1234567890" pattern="[+]?[0-9]{10,15}">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="email">Email Address</label>
+                        <input type="email" id="email" name="email" placeholder="patient@example.com">
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group full-width">
+                        <label for="medicalHistory">Medical History</label>
+                        <select id="medicalHistory" name="medicalHistory">
+                            <option value="">Select if applicable</option>
+                            <option value="none">No significant history</option>
+                            <option value="hypertension">Hypertension</option>
+                            <option value="diabetes">Diabetes</option>
+                            <option value="stroke">Previous Stroke</option>
+                            <option value="dementia_family">Family History of Dementia</option>
+                            <option value="other">Other</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="symptoms">Primary Symptoms</label>
+                        <select id="symptoms" name="symptoms">
+                            <option value="">Select primary symptom</option>
+                            <option value="memory_loss">Memory Loss</option>
+                            <option value="confusion">Confusion/Disorientation</option>
+                            <option value="language">Language Difficulties</option>
+                            <option value="mood_changes">Mood/Behavior Changes</option>
+                            <option value="routine">Routine Assessment</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="duration">Symptom Duration</label>
+                        <select id="duration" name="duration">
+                            <option value="">Select duration</option>
+                            <option value="recent">Less than 1 month</option>
+                            <option value="short">1-6 months</option>
+                            <option value="medium">6-12 months</option>
+                            <option value="long">More than 1 year</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="form-row">
+                    <div class="form-group full-width">
+                        <label for="notes">Additional Notes</label>
+                        <textarea id="notes" name="notes" placeholder="Any additional information..." rows="3" maxlength="500"></textarea>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Upload Brain Scan Image(s)</h2>
+                <p style="color: #00eaff; font-size: 0.9rem; margin-bottom: 10px;">You can upload up to 5 images for batch analysis</p>
+
+                <input type="file" id="imageInput" accept="image/*" multiple required>
+
+                <div id="preview"></div>
+            </div>
+
+            <button type="submit">🔍 Analyze Image</button>
+            
+            <div style="margin-top: 15px; text-align: center;">
+                <label style="display: inline-flex; align-items: center; color: #00eaff; cursor: pointer;">
+                    <input type="checkbox" id="advancedExplain" style="margin-right: 10px; width: auto; cursor: pointer;">
+                    <span>Enable Advanced Explainability (LIME & SHAP) - Takes 30-60 seconds</span>
+                </label>
+            </div>
+
+        </form>
+
+        <div id="result" class="result hidden">
+            <h2>🔬 Diagnostic Analysis Results</h2>
+            
+            <div id="multipleResults"></div>
+
+            <button onclick="window.print()" class="print-button">🖨️ Print Report</button>
+        </div>
+
+        <!-- History Modal -->
+        <div id="historyModal" class="modal hidden" style="display: none;">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h2>📜 Prediction History</h2>
+                    <button type="button" onclick="closeHistory(); return false;" class="close-button">✕</button>
+                </div>
+                <div id="historyContent" class="modal-body"></div>
+            </div>
+        </div>
+
+        <footer>
+            <p>⚠️ Academic Project – Not for Clinical Diagnosis</p>
+        </footer>
+
+    </div>
+
+    <script src="script.js?v=4"></script>
+</body>
+</html>

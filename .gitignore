@@ -1,0 +1,23 @@
+# Model files (too large for GitHub - 100MB limit)
+*.h5
+*.keras
+*.pb
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Dataset folder (too large)
+archive (7)/
+
+# VS Code settings
+.vscode/
+
+# Prediction history (user data)
+prediction_history.json
+
+# Environment
+.env
+venv/
+env/
