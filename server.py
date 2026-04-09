@@ -230,6 +230,15 @@ def predict():
             print("   Creating Grad-CAM...")
             img_rgb = np.array(image)  # Convert PIL image to NumPy for OpenCV
 
+            # Create brain mask to restrict heatmap to inside brain only
+            # Pixels below intensity 15 are considered black background
+            gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
+            _, brain_mask = cv2.threshold(gray, 15, 255, cv2.THRESH_BINARY)
+            kernel = np.ones((5, 5), np.uint8)
+            brain_mask = cv2.morphologyEx(brain_mask, cv2.MORPH_CLOSE, kernel)
+            brain_mask = cv2.morphologyEx(brain_mask, cv2.MORPH_OPEN, kernel)
+            brain_mask_3ch = cv2.merge([brain_mask, brain_mask, brain_mask])
+
             try:
                 # Find the last Conv2D layer in the model
                 # This is the layer whose activations we use for Grad-CAM
@@ -285,8 +294,13 @@ def predict():
                 # Convert from BGR (OpenCV default) to RGB
                 heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
 
-                # Blend original image (60%) with heatmap (40%) for overlay
-                overlay = cv2.addWeighted(img_rgb, 0.6, heatmap_colored, 0.4, 0)
+                # Zero out heatmap outside brain region to prevent color bleed
+                heatmap_colored = np.where(brain_mask_3ch > 0, heatmap_colored, 0)
+
+                # Blend heatmap with original image only inside brain region
+                overlay = img_rgb.copy()
+                brain_pixels = brain_mask_3ch > 0
+                overlay[brain_pixels] = cv2.addWeighted(img_rgb, 0.5, heatmap_colored, 0.5, 0)[brain_pixels]
                 print("   ✅ Real Grad-CAM generated")
 
             except Exception as e:
@@ -311,7 +325,12 @@ def predict():
                 heatmap = np.uint8(255 * heatmap)
                 heatmap_colored = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
                 heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
-                overlay = cv2.addWeighted(img_rgb, 0.6, heatmap_colored, 0.4, 0)
+
+                # Apply brain mask to fallback too — no color bleed outside brain
+                heatmap_colored = np.where(brain_mask_3ch > 0, heatmap_colored, 0)
+                overlay = img_rgb.copy()
+                brain_pixels = brain_mask_3ch > 0
+                overlay[brain_pixels] = cv2.addWeighted(img_rgb, 0.5, heatmap_colored, 0.5, 0)[brain_pixels]
 
             # Encode the Grad-CAM overlay image as base64 PNG for JSON transport
             _, buffer = cv2.imencode('.png', cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR))
