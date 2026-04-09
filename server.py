@@ -135,22 +135,69 @@ def predict():
             
             print(f"   ✅ Prediction: {predicted_class} ({confidence*100:.2f}%)")
             
-            # Create simple heatmap (Grad-CAM)
+            # Real Grad-CAM implementation
             print("   Creating Grad-CAM...")
             img_rgb = np.array(image)
-            h, w = img_rgb.shape[:2]
             
-            # Simple center-focused heatmap
-            y, x = np.ogrid[:h, :w]
-            center_y, center_x = h // 2, w // 2
-            distance = np.sqrt((x - center_x)**2 + (y - center_y)**2)
-            max_dist = np.sqrt(center_x**2 + center_y**2)
-            heatmap = 1 - (distance / max_dist)
-            heatmap = np.uint8(255 * heatmap)
-            heatmap = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-            
-            # Overlay
-            overlay = cv2.addWeighted(img_rgb, 0.6, heatmap, 0.4, 0)
+            try:
+                # Find the last convolutional layer
+                last_conv_layer = None
+                for layer in reversed(model.layers):
+                    if isinstance(layer, tf.keras.layers.Conv2D):
+                        last_conv_layer = layer.name
+                        break
+                
+                if last_conv_layer is None:
+                    raise Exception("No Conv2D layer found")
+                
+                # Build grad model
+                grad_model = tf.keras.models.Model(
+                    inputs=model.inputs,
+                    outputs=[model.get_layer(last_conv_layer).output, model.output]
+                )
+                
+                # Compute gradients
+                with tf.GradientTape() as tape:
+                    img_tensor = tf.cast(img_array, tf.float32)
+                    conv_outputs, predictions_tape = grad_model(img_tensor)
+                    loss = predictions_tape[:, pred_idx]
+                
+                grads = tape.gradient(loss, conv_outputs)
+                pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+                conv_outputs = conv_outputs[0]
+                heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+                heatmap = tf.squeeze(heatmap).numpy()
+                
+                # Normalize
+                heatmap = np.maximum(heatmap, 0)
+                if heatmap.max() > 0:
+                    heatmap = heatmap / heatmap.max()
+                
+                # Resize to image size
+                heatmap = cv2.resize(heatmap, (128, 128))
+                heatmap = np.uint8(255 * heatmap)
+                heatmap_colored = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+                heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
+                overlay = cv2.addWeighted(img_rgb, 0.6, heatmap_colored, 0.4, 0)
+                print("   ✅ Real Grad-CAM generated")
+                
+            except Exception as e:
+                print(f"   ⚠️ Grad-CAM failed ({e}), using saliency fallback...")
+                img_tensor = tf.cast(img_array, tf.float32)
+                with tf.GradientTape() as tape:
+                    tape.watch(img_tensor)
+                    preds = model(img_tensor)
+                    loss = preds[:, pred_idx]
+                grads = tape.gradient(loss, img_tensor)
+                saliency = tf.abs(grads).numpy()[0]
+                heatmap = np.mean(saliency, axis=-1)
+                heatmap = np.maximum(heatmap, 0)
+                if heatmap.max() > 0:
+                    heatmap = heatmap / heatmap.max()
+                heatmap = np.uint8(255 * heatmap)
+                heatmap_colored = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+                heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
+                overlay = cv2.addWeighted(img_rgb, 0.6, heatmap_colored, 0.4, 0)
             
             # Encode
             _, buffer = cv2.imencode('.png', cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR))
