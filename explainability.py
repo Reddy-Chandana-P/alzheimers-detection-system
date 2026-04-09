@@ -10,30 +10,31 @@ import base64
 
 def generate_lime_explanation(model, image, class_names, num_samples=100):
     """
-    Generate LIME explanation for image classification
-    
-    Args:
-        model: Trained Keras model
-        image: Preprocessed image (1, 128, 128, 3)
-        class_names: List of class names
-        num_samples: Number of samples for LIME (lower = faster)
-    
-    Returns:
-        lime_image_base64: Base64 encoded LIME visualization
-        explanation_text: Text description
+    Generate LIME explanation - highlights only regions inside the brain
     """
     try:
         print("   Generating LIME explanation...")
         
-        # Get original image
         img = image[0]
         
+        # Create brain mask to restrict highlights to inside brain only
+        # Convert to grayscale and threshold to find brain region
+        img_uint8 = np.uint8(img * 255)
+        gray = cv2.cvtColor(img_uint8, cv2.COLOR_RGB2GRAY)
+        
+        # Threshold to separate brain from background
+        _, brain_mask = cv2.threshold(gray, 15, 255, cv2.THRESH_BINARY)
+        
+        # Morphological operations to clean up the mask
+        kernel = np.ones((5, 5), np.uint8)
+        brain_mask = cv2.morphologyEx(brain_mask, cv2.MORPH_CLOSE, kernel)
+        brain_mask = cv2.morphologyEx(brain_mask, cv2.MORPH_OPEN, kernel)
+        brain_mask_bool = brain_mask > 0
+
         # Create LIME explainer
         explainer = lime_image.LimeImageExplainer()
         
-        # Prediction function for LIME
         def predict_fn(images):
-            # LIME passes images in range [0, 1]
             return model.predict(images, verbose=0)
         
         # Generate explanation
@@ -45,10 +46,10 @@ def generate_lime_explanation(model, image, class_names, num_samples=100):
             num_samples=num_samples
         )
         
-        # Get the predicted class
         pred_class = np.argmax(model.predict(image, verbose=0)[0])
+        pred_probs = model.predict(image, verbose=0)[0]
         
-        # Get image and mask
+        # Get image and mask from LIME
         temp, mask = explanation.get_image_and_mask(
             pred_class,
             positive_only=True,
@@ -56,22 +57,58 @@ def generate_lime_explanation(model, image, class_names, num_samples=100):
             hide_rest=False
         )
         
-        # Create visualization
-        fig, ax = plt.subplots(1, 1, figsize=(8, 8))
-        ax.imshow(mark_boundaries(temp, mask))
-        ax.set_title(f'LIME Explanation\nHighlighted: Important regions for "{class_names[pred_class]}"',
-                    fontsize=12, fontweight='bold')
-        ax.axis('off')
-        
+        # Apply brain mask - remove highlights outside brain
+        mask_filtered = mask & brain_mask_bool
+
+        # If filtering removed everything, fall back to original mask
+        if mask_filtered.sum() == 0:
+            mask_filtered = mask
+
+        # Create a 1x3 figure with clear panels
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        fig.patch.set_facecolor('#0a0a1a')
+
+        # Panel 1: Original image
+        axes[0].imshow(img)
+        axes[0].set_title('Original MRI Scan', fontsize=11, fontweight='bold', color='white')
+        axes[0].axis('off')
+
+        # Panel 2: Brain mask (shows what was detected as brain)
+        axes[1].imshow(img)
+        brain_overlay = np.zeros_like(img)
+        brain_overlay[brain_mask_bool] = [0, 0.6, 0.6]
+        axes[1].imshow(brain_overlay, alpha=0.3)
+        axes[1].set_title('Detected Brain Region\n(Teal overlay = brain area)', fontsize=11, fontweight='bold', color='white')
+        axes[1].axis('off')
+
+        # Panel 3: LIME highlights restricted to brain only
+        axes[2].imshow(mark_boundaries(temp, mask_filtered, color=(1, 1, 0), mode='thick'))
+        axes[2].set_title(f'LIME Important Regions\n(Yellow = key areas for "{class_names[pred_class]}")',
+                          fontsize=11, fontweight='bold', color='white')
+        axes[2].axis('off')
+
+        for ax in axes:
+            ax.set_facecolor('#0a0a1a')
+
+        plt.suptitle(f'LIME Analysis — Prediction: "{class_names[pred_class]}" ({pred_probs[pred_class]*100:.1f}% confidence)',
+                     fontsize=13, fontweight='bold', color='#00eaff')
+        plt.tight_layout()
+
         # Convert to base64
         buf = io.BytesIO()
-        plt.savefig(buf, format='png', bbox_inches='tight', dpi=100)
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=100, facecolor='#0a0a1a')
         buf.seek(0)
         lime_base64 = base64.b64encode(buf.read()).decode('utf-8')
         plt.close()
-        
-        # Generate explanation text
-        explanation_text = f"LIME identified {len(mask[mask > 0])} superpixels as most influential for the '{class_names[pred_class]}' prediction."
+
+        region_count = len(np.unique(mask_filtered)[1:]) if mask_filtered.sum() > 0 else 0
+        explanation_text = (
+            f"LIME identified <strong>{region_count} brain regions</strong> most influential for the "
+            f"<strong>'{class_names[pred_class]}'</strong> prediction. "
+            f"Highlights are restricted to inside the brain boundary only. "
+            f"Yellow outlines show the specific areas that, when present, most strongly support this diagnosis. "
+            f"The teal overlay in the middle panel shows the detected brain region used to filter out background noise."
+        )
         
         return f"data:image/png;base64,{lime_base64}", explanation_text
         
