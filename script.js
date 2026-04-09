@@ -531,7 +531,46 @@ function createResultHTML(result, index, isMultiple) {
                     </div>
                 </div>
             </div>
+
+            <!-- CONFUSION MATRIX -->
+            <div class="explainability-section" id="confusionMatrixSection">
+                <h3>📊 Model Confusion Matrix</h3>
+                <p class="explanation-text">
+                    <strong>What is a Confusion Matrix?</strong> It shows how well the model performed on the test dataset.
+                    Each row represents the actual class, each column represents the predicted class.
+                    The diagonal values (top-left to bottom-right) show correct predictions — higher diagonal values mean better performance.
+                    Off-diagonal values show misclassifications.
+                </p>
+                <div id="confusionMatrixContainer" style="text-align: center; margin-top: 15px;">
+                    <p style="color: rgba(255,255,255,0.5); font-size: 0.9rem;">Loading confusion matrix...</p>
+                </div>
+            </div>
         `;
+
+        // Load confusion matrix from metrics endpoint
+        fetch('http://localhost:5001/metrics')
+            .then(res => res.json())
+            .then(data => {
+                const container = document.getElementById('confusionMatrixContainer');
+                if (data.confusion_matrix) {
+                    container.innerHTML = `
+                        <img src="${data.confusion_matrix}" alt="Confusion Matrix"
+                             style="max-width: 600px; width: 100%; border-radius: 10px; border: 2px solid rgba(0,234,255,0.3);">
+                        <p style="margin-top: 12px; font-size: 0.85rem; color: rgba(255,255,255,0.6);">
+                            Overall Test Accuracy: <strong style="color:#00eaff;">${data.accuracy}</strong> &nbsp;|&nbsp;
+                            Precision: <strong style="color:#00eaff;">${data.precision}</strong> &nbsp;|&nbsp;
+                            Recall: <strong style="color:#00eaff;">${data.recall}</strong> &nbsp;|&nbsp;
+                            F1 Score: <strong style="color:#00eaff;">${data.f1_score}</strong>
+                        </p>
+                    `;
+                } else {
+                    container.innerHTML = `<p style="color: rgba(255,255,255,0.4);">Confusion matrix not available.</p>`;
+                }
+            })
+            .catch(() => {
+                const container = document.getElementById('confusionMatrixContainer');
+                if (container) container.innerHTML = `<p style="color: rgba(255,255,255,0.4);">Could not load confusion matrix.</p>`;
+            });
     }
 
     return html;
