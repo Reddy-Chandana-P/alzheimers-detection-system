@@ -227,11 +227,10 @@ def predict():
             # its prediction. Red/yellow = high importance, blue = low importance.
             # =================================================================
 
-            print("   Creating Grad-CAM...")
+            print("   Creating Grad-CAM++...")
             img_rgb = np.array(image)  # Convert PIL image to NumPy for OpenCV
 
             # Create brain mask to restrict heatmap to inside brain only
-            # Pixels below intensity 15 are considered black background
             gray = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2GRAY)
             _, brain_mask = cv2.threshold(gray, 15, 255, cv2.THRESH_BINARY)
             kernel = np.ones((5, 5), np.uint8)
@@ -240,8 +239,7 @@ def predict():
             brain_mask_3ch = cv2.merge([brain_mask, brain_mask, brain_mask])
 
             try:
-                # Find the last Conv2D layer in the model
-                # This is the layer whose activations we use for Grad-CAM
+                # Find the last Conv2D layer
                 last_conv_layer = None
                 for layer in reversed(model.layers):
                     if isinstance(layer, tf.keras.layers.Conv2D):
@@ -251,72 +249,129 @@ def predict():
                 if last_conv_layer is None:
                     raise Exception("No Conv2D layer found")
 
-                # Build a sub-model that outputs both:
-                # 1. The activations of the last conv layer
-                # 2. The final prediction probabilities
+                # Build grad model outputting conv activations + predictions
                 grad_model = tf.keras.models.Model(
                     inputs=model.inputs,
                     outputs=[model.get_layer(last_conv_layer).output, model.output]
                 )
 
-                # Use GradientTape to record operations for automatic differentiation
-                with tf.GradientTape() as tape:
-                    img_tensor = tf.cast(img_array, tf.float32)
-                    conv_outputs, predictions_tape = grad_model(img_tensor)
+                # =============================================================
+                # GRAD-CAM++ ALGORITHM
+                # =============================================================
+                # Grad-CAM++ improves on Grad-CAM by using second-order gradients
+                # (second derivatives of the loss w.r.t. conv activations).
+                #
+                # Key difference from Grad-CAM:
+                #   - Grad-CAM:   weights = mean(gradients)
+                #   - Grad-CAM++: weights = sum(alpha * ReLU(gradients))
+                #     where alpha accounts for the importance of each gradient
+                #     using second-order and third-order gradient information.
+                #
+                # This produces more accurate localization, especially when
+                # multiple instances of the same class appear in the image
+                # (e.g., bilateral hippocampal atrophy in Alzheimer's).
+                # =============================================================
 
-                    # We want gradients of the predicted class score
-                    # with respect to the conv layer outputs
-                    loss = predictions_tape[:, pred_idx]
+                with tf.GradientTape() as tape2:
+                    with tf.GradientTape() as tape1:
+                        with tf.GradientTape() as tape0:
+                            img_tensor = tf.cast(img_array, tf.float32)
+                            conv_outputs, predictions_tape = grad_model(img_tensor)
+                            loss = predictions_tape[:, pred_idx]
 
-                # Compute gradients of the class score w.r.t. conv layer outputs
-                grads = tape.gradient(loss, conv_outputs)
+                        # First-order gradients: dL/dA
+                        grads_1 = tape0.gradient(loss, conv_outputs)
 
-                # Pool gradients over spatial dimensions to get importance weights
-                pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+                    # Second-order gradients: d²L/dA²
+                    grads_2 = tape1.gradient(grads_1, conv_outputs)
 
-                # Weight the conv outputs by the pooled gradients
-                conv_outputs = conv_outputs[0]
-                heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
-                heatmap = tf.squeeze(heatmap).numpy()
+                # Third-order gradients: d³L/dA³
+                grads_3 = tape2.gradient(grads_2, conv_outputs)
 
-                # Apply ReLU (keep only positive activations) and normalize to [0, 1]
+                # Compute alpha weights using second and third order gradients
+                # alpha_k_c = grad_2 / (2 * grad_2 + sum(A * grad_3) + eps)
+                conv_outputs_val = conv_outputs.numpy()[0]   # Shape: (H, W, C)
+                grads_1_val = grads_1.numpy()[0]
+                grads_2_val = grads_2.numpy()[0]
+                grads_3_val = grads_3.numpy()[0]
+
+                # Sum of activations weighted by third-order gradients
+                global_sum = np.sum(conv_outputs_val, axis=(0, 1))  # Shape: (C,)
+
+                # Alpha: importance weight for each channel
+                alpha_num   = grads_2_val
+                alpha_denom = 2.0 * grads_2_val + global_sum[np.newaxis, np.newaxis, :] * grads_3_val + 1e-7
+                alpha = alpha_num / alpha_denom
+
+                # Apply ReLU to first-order gradients before weighting
+                weights = np.sum(alpha * np.maximum(grads_1_val, 0), axis=(0, 1))  # Shape: (C,)
+
+                # Weighted combination of conv feature maps
+                heatmap = np.sum(weights * conv_outputs_val, axis=-1)  # Shape: (H, W)
+
+                # Apply ReLU and normalize
                 heatmap = np.maximum(heatmap, 0)
                 if heatmap.max() > 0:
                     heatmap = heatmap / heatmap.max()
 
-                # Resize heatmap to match the input image size (128x128)
+                # Resize to image size
                 heatmap = cv2.resize(heatmap, (128, 128))
 
-                # Convert to uint8 and apply JET colormap (blue→green→yellow→red)
+                # Apply JET colormap
                 heatmap = np.uint8(255 * heatmap)
                 heatmap_colored = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
-
-                # Convert from BGR (OpenCV default) to RGB
                 heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
 
-                # Zero out heatmap outside brain region to prevent color bleed
+                # Apply brain mask — no color bleed outside brain
                 heatmap_colored = np.where(brain_mask_3ch > 0, heatmap_colored, 0)
 
-                # Blend heatmap with original image only inside brain region
+                # Blend with original image inside brain only
                 overlay = img_rgb.copy()
                 brain_pixels = brain_mask_3ch > 0
                 overlay[brain_pixels] = cv2.addWeighted(img_rgb, 0.5, heatmap_colored, 0.5, 0)[brain_pixels]
-                print("   ✅ Real Grad-CAM generated")
+                print("   ✅ Grad-CAM++ generated")
 
             except Exception as e:
-                # Fallback: use gradient saliency map if Grad-CAM fails
-                # This computes gradients of the loss w.r.t. the input image directly
-                print(f"   ⚠️ Grad-CAM failed ({e}), using saliency fallback...")
-                img_tensor = tf.cast(img_array, tf.float32)
-                with tf.GradientTape() as tape:
-                    tape.watch(img_tensor)
-                    preds = model(img_tensor)
-                    loss = preds[:, pred_idx]
+                # Fallback to standard Grad-CAM if Grad-CAM++ fails
+                print(f"   ⚠️ Grad-CAM++ failed ({e}), falling back to Grad-CAM...")
+                try:
+                    grad_model = tf.keras.models.Model(
+                        inputs=model.inputs,
+                        outputs=[model.get_layer(last_conv_layer).output, model.output]
+                    )
+                    with tf.GradientTape() as tape:
+                        img_tensor = tf.cast(img_array, tf.float32)
+                        conv_outputs, predictions_tape = grad_model(img_tensor)
+                        loss = predictions_tape[:, pred_idx]
+                    grads = tape.gradient(loss, conv_outputs)
+                    pooled_grads = tf.reduce_mean(grads, axis=(0, 1, 2))
+                    conv_outputs = conv_outputs[0]
+                    heatmap = conv_outputs @ pooled_grads[..., tf.newaxis]
+                    heatmap = tf.squeeze(heatmap).numpy()
+                    heatmap = np.maximum(heatmap, 0)
+                    if heatmap.max() > 0:
+                        heatmap = heatmap / heatmap.max()
+                    heatmap = cv2.resize(heatmap, (128, 128))
+                    heatmap = np.uint8(255 * heatmap)
+                    heatmap_colored = cv2.applyColorMap(heatmap, cv2.COLORMAP_JET)
+                    heatmap_colored = cv2.cvtColor(heatmap_colored, cv2.COLOR_BGR2RGB)
+                    heatmap_colored = np.where(brain_mask_3ch > 0, heatmap_colored, 0)
+                    overlay = img_rgb.copy()
+                    brain_pixels = brain_mask_3ch > 0
+                    overlay[brain_pixels] = cv2.addWeighted(img_rgb, 0.5, heatmap_colored, 0.5, 0)[brain_pixels]
+                    print("   ✅ Grad-CAM fallback generated")
+                except Exception as e2:
+                    print(f"   ⚠️ Grad-CAM also failed ({e2}), using saliency fallback...")
+                    img_tensor = tf.cast(img_array, tf.float32)
+                    with tf.GradientTape() as tape:
+                        tape.watch(img_tensor)
+                        preds = model(img_tensor)
+                        loss = preds[:, pred_idx]
 
-                # Compute absolute gradients and average across color channels
-                grads = tape.gradient(loss, img_tensor)
-                saliency = tf.abs(grads).numpy()[0]
-                heatmap = np.mean(saliency, axis=-1)
+                    # Compute absolute gradients and average across color channels
+                    grads = tape.gradient(loss, img_tensor)
+                    saliency = tf.abs(grads).numpy()[0]
+                    heatmap = np.mean(saliency, axis=-1)
 
                 # Normalize and apply colormap
                 heatmap = np.maximum(heatmap, 0)

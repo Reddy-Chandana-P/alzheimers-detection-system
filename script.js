@@ -356,12 +356,11 @@ function createResultHTML(result, index, isMultiple) {
                 </div>
             </div>
 
-            <!-- GRAD-CAM VISUALIZATION -->
+            <!-- GRAD-CAM++ VISUALIZATION -->
             <div class="explainability-section">
-                <h3>🧠 Visual Explanation (Grad-CAM)</h3>
+                <h3>🧠 Visual Explanation (Grad-CAM++)</h3>
                 <p class="explanation-text">
-                    <strong>What is Grad-CAM?</strong> Gradient-weighted Class Activation Mapping (Grad-CAM) is a technique that produces a visual explanation for the AI's decision.
-                    It uses the gradients flowing into the final convolutional layer to highlight the regions that were most important for the prediction.
+                    <strong>What is Grad-CAM++?</strong> An improved version of Grad-CAM that uses second-order gradients to produce more accurate and complete localization of important brain regions. Unlike standard Grad-CAM which can miss multiple affected areas, Grad-CAM++ detects all discriminative regions simultaneously — critical for Alzheimer's where atrophy occurs in multiple brain areas at once.
                 </p>
                 <p class="explanation-text" style="margin-top: 10px;">
                     <strong>How to read this map:</strong> The heatmap is overlaid on your brain scan.
@@ -374,7 +373,7 @@ function createResultHTML(result, index, isMultiple) {
                     temporal lobes (sides of brain), and ventricular spaces — areas known to show atrophy in Alzheimer's disease.
                 </p>
                 <div class="gradcam-container">
-                    <img src="${result.gradcam}" alt="Grad-CAM Visualization"
+                    <img src="${result.gradcam}" alt="Grad-CAM++ Visualization"
                          style="max-width: 400px; width: 100%; border-radius: 10px; border: 3px solid #00eaff; box-shadow: 0 4px 20px rgba(0, 234, 255, 0.3);">
                     <!-- Color scale legend -->
                     <div class="heatmap-legend">
