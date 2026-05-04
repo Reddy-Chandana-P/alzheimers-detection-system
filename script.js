@@ -389,6 +389,46 @@ function createResultHTML(result, index, isMultiple) {
                 </div>
             </div>
 
+            <!-- ANATOMICAL REGION ANALYSIS -->
+            ${result.anatomical_regions ? `
+            <div class="explainability-section">
+                <h3>🗺️ Anatomical Region Analysis</h3>
+                <p class="explanation-text">
+                    <strong>What this shows:</strong> The brain scan is divided into 9 anatomical regions. The percentages show how much the model's Grad-CAM attention fell on each region — higher means the model found that area more diagnostically relevant.
+                </p>
+                <div style="margin: 15px 0;">
+                    <p class="explanation-text"><strong style="color:#00e5a0;">Top Regions of Interest:</strong></p>
+                    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-top: 10px;">
+                        ${result.anatomical_regions.top_regions.map((region, i) => `
+                            <div style="padding: 15px; background: rgba(0,229,160,${i === 0 ? '0.15' : i === 1 ? '0.1' : '0.06'}); border-radius: 10px; border: 1px solid rgba(0,229,160,${i === 0 ? '0.5' : '0.3'}); text-align: center;">
+                                <div style="font-size: 1.5rem; margin-bottom: 5px;">${i === 0 ? '🥇' : i === 1 ? '🥈' : '🥉'}</div>
+                                <div style="color: #00e5a0; font-weight: bold; font-size: 0.9rem; margin-bottom: 5px;">${region.name}</div>
+                                <div style="color: #fff; font-size: 1.8rem; font-weight: bold;">${region.score}%</div>
+                                <div style="color: rgba(255,255,255,0.6); font-size: 0.8rem;">Activation: ${region.level}</div>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+                <div style="margin-top: 20px;">
+                    <p class="explanation-text"><strong style="color:#00e5a0;">All Brain Regions:</strong></p>
+                    ${Object.entries(result.anatomical_regions.all_regions).map(([name, score]) => `
+                        <div style="margin: 8px 0;">
+                            <div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+                                <span style="color: #fff; font-size: 0.85rem;">${name}</span>
+                                <span style="color: #00e5a0; font-size: 0.85rem; font-weight: bold;">${score}%</span>
+                            </div>
+                            <div style="width: 100%; height: 8px; background: rgba(255,255,255,0.1); border-radius: 4px; overflow: hidden;">
+                                <div style="width: ${Math.min(score * 2, 100)}%; height: 100%; background: linear-gradient(90deg, #00b37a, #00ffc3); border-radius: 4px;"></div>
+                            </div>
+                        </div>
+                    `).join('')}
+                </div>
+                <p class="explanation-text" style="margin-top: 15px; font-size: 0.9rem; opacity: 0.8;">
+                    <strong>Clinical context:</strong> In Alzheimer's disease, the hippocampus and temporal lobes are typically the first regions to show atrophy. High activation in these areas confirms the model is detecting clinically relevant structural changes.
+                </p>
+            </div>
+            ` : ''}
+
             <!-- CLINICAL INTERPRETATION (only shown if insight data exists for this class) -->
             ${insight ? `
             <div class="explainability-section">

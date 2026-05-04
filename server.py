@@ -336,6 +336,79 @@ def predict():
             _, buffer = cv2.imencode('.png', cv2.cvtColor(overlay, cv2.COLOR_RGB2BGR))
             overlay_base64 = base64.b64encode(buffer).decode('utf-8')
 
+            # =================================================================
+            # ANATOMICAL REGION ANALYSIS
+            # =================================================================
+            # Divide the brain scan into 9 anatomical regions based on spatial
+            # position. Calculate the average Grad-CAM activation in each region
+            # to identify which brain areas the model focused on most.
+            #
+            # Region map (3x3 grid on 128x128 image):
+            #   ┌─────────────────────────────────┐
+            #   │  Frontal  │  Parietal │  Frontal │  (top row)
+            #   │  (Left)   │  (Top)    │  (Right) │
+            #   ├───────────┼───────────┼──────────┤
+            #   │ Temporal  │Hippocampus│ Temporal │  (middle row)
+            #   │  (Left)   │ /Ventricle│  (Right) │
+            #   ├───────────┼───────────┼──────────┤
+            #   │ Occipital │ Brainstem │ Occipital│  (bottom row)
+            #   │  (Left)   │           │  (Right) │
+            #   └─────────────────────────────────┘
+            # =================================================================
+
+            # Use the normalized heatmap (before colormap) for region analysis
+            # heatmap_norm is float [0,1] — higher = more important
+            heatmap_norm = cv2.resize(
+                np.maximum(heatmap.astype(np.float32) / 255.0, 0),
+                (128, 128)
+            )
+
+            # Apply brain mask to exclude background from region scores
+            heatmap_norm = heatmap_norm * (brain_mask / 255.0)
+
+            h, w = 128, 128
+            r, c = h // 3, w // 3  # Each region is ~42x42 pixels
+
+            # Define 9 anatomical regions with their grid positions and names
+            regions = {
+                'Left Frontal Lobe':    heatmap_norm[0:r,   0:c],
+                'Parietal Lobe (Top)':  heatmap_norm[0:r,   c:2*c],
+                'Right Frontal Lobe':   heatmap_norm[0:r,   2*c:w],
+                'Left Temporal Lobe':   heatmap_norm[r:2*r, 0:c],
+                'Hippocampus/Ventricle':heatmap_norm[r:2*r, c:2*c],
+                'Right Temporal Lobe':  heatmap_norm[r:2*r, 2*c:w],
+                'Left Occipital Lobe':  heatmap_norm[2*r:h, 0:c],
+                'Brainstem':            heatmap_norm[2*r:h, c:2*c],
+                'Right Occipital Lobe': heatmap_norm[2*r:h, 2*c:w],
+            }
+
+            # Calculate mean activation per region (only non-zero pixels)
+            region_scores = {}
+            for region_name, region_data in regions.items():
+                nonzero = region_data[region_data > 0]
+                region_scores[region_name] = float(np.mean(nonzero)) if len(nonzero) > 0 else 0.0
+
+            # Sort regions by activation score (highest first)
+            sorted_regions = sorted(region_scores.items(), key=lambda x: x[1], reverse=True)
+
+            # Top 3 most activated regions
+            top_regions = sorted_regions[:3]
+
+            # Build anatomical summary text
+            anatomical_summary = {
+                'top_regions': [
+                    {
+                        'name': name,
+                        'score': round(score * 100, 1),
+                        'level': 'High' if score > 0.5 else 'Moderate' if score > 0.25 else 'Low'
+                    }
+                    for name, score in top_regions
+                ],
+                'all_regions': {name: round(score * 100, 1) for name, score in sorted_regions}
+            }
+
+            print(f"   ✅ Anatomical analysis: top region = {top_regions[0][0]} ({top_regions[0][1]*100:.1f}%)")
+
             # --- Build result dictionary for this image ---
             result = {
                 'filename': image_file.filename,
@@ -348,7 +421,8 @@ def predict():
                     for i in range(len(CLASS_NAMES))
                 },
                 'gradcam': f"data:image/png;base64,{overlay_base64}",
-                'original_image': f"data:image/png;base64,{original_image_base64}"
+                'original_image': f"data:image/png;base64,{original_image_base64}",
+                'anatomical_regions': anatomical_summary
             }
 
             # --- Advanced Explainability (LIME + SHAP) ---
