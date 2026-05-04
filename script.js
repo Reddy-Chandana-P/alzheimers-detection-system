@@ -474,9 +474,13 @@ function createResultHTML(result, index, isMultiple) {
                 <!-- LIME SECTION -->
                 <div style="margin: 20px 0; padding: 20px; background: rgba(0,234,255,0.05); border-radius: 10px; border: 1px solid rgba(0,234,255,0.2);">
                     <h4 style="color: #00eaff; margin-bottom: 10px;">🔍 LIME (Local Interpretable Model-agnostic Explanations)</h4>
-                    <p class="explanation-text"><strong>What LIME does:</strong> LIME works by creating hundreds of slightly modified versions of your brain scan (hiding different regions each time) and observing how the model's prediction changes. This reveals which specific regions are truly essential for the diagnosis.</p>
+                    <p class="explanation-text"><strong>What LIME does:</strong> LIME creates hundreds of modified versions of your brain scan (hiding different regions each time) and observes how the model's prediction changes. This reveals which specific regions are truly essential for the diagnosis.</p>
                     <p class="explanation-text" style="margin-top: 8px;"><strong>Result:</strong> ${result.lime.text}</p>
-                    <p class="explanation-text" style="margin-top: 8px;"><strong>How to read:</strong> The yellow highlighted boundaries outline the brain regions that, when present, most strongly support the "${result.prediction}" diagnosis. Regions outside the boundaries had minimal impact on the decision.</p>
+                    <p class="explanation-text" style="margin-top: 8px;"><strong>How to read:</strong>
+                        <span style="color:#00ff88;">■ Green boundaries</span> = regions that <strong>support</strong> the "${result.prediction}" diagnosis.
+                        <span style="color:#ff4444;">■ Red boundaries</span> = regions that <strong>argue against</strong> it.
+                        The combined panel (4th) shows both overlaid on the original scan.
+                    </p>
                     <div style="text-align: center; margin-top: 15px;">
                         <img src="${result.lime.image}" alt="LIME Explanation"
                              style="max-width: 500px; width: 100%; border-radius: 10px; border: 2px solid #00eaff;">
