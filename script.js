@@ -532,6 +532,89 @@ function createResultHTML(result, index, isMultiple) {
                     </table>
                 </div>
             </div>
+
+            <!-- COUNTERFACTUAL EXPLANATION -->
+            ${result.counterfactual && result.counterfactual.image ? `
+            <div class="explainability-section">
+                <h3>🔀 Counterfactual Explanation</h3>
+                <p class="explanation-text">
+                    <strong>What is a Counterfactual?</strong> A counterfactual answers: <em>"What is the smallest change to this brain scan that would flip the diagnosis to a different class?"</em>
+                    It reveals the decision boundary — how far this scan is from being classified differently, and which brain regions are most critical for distinguishing between diagnoses.
+                </p>
+
+                ${result.counterfactual.data ? `
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 15px 0;">
+                    <div style="padding: 12px; background: rgba(255,68,68,0.1); border: 1px solid rgba(255,68,68,0.3); border-radius: 10px; text-align: center;">
+                        <div style="color: rgba(255,255,255,0.6); font-size: 0.8rem; margin-bottom: 5px;">Original Diagnosis</div>
+                        <div style="color: #ff4444; font-weight: bold;">${result.counterfactual.data.original_class}</div>
+                        <div style="color: #fff; font-size: 0.85rem;">${result.counterfactual.data.original_confidence}</div>
+                    </div>
+                    <div style="padding: 12px; background: rgba(0,229,160,0.1); border: 1px solid rgba(0,229,160,0.3); border-radius: 10px; text-align: center;">
+                        <div style="color: rgba(255,255,255,0.6); font-size: 0.8rem; margin-bottom: 5px;">Counterfactual Diagnosis</div>
+                        <div style="color: #00e5a0; font-weight: bold;">${result.counterfactual.data.final_class}</div>
+                        <div style="color: #fff; font-size: 0.85rem;">${result.counterfactual.data.final_confidence}</div>
+                    </div>
+                    <div style="padding: 12px; background: rgba(0,234,255,0.08); border: 1px solid rgba(0,234,255,0.2); border-radius: 10px; text-align: center;">
+                        <div style="color: rgba(255,255,255,0.6); font-size: 0.8rem; margin-bottom: 5px;">Prediction Flipped</div>
+                        <div style="font-size: 1.5rem;">${result.counterfactual.data.flipped ? '✅' : '❌'}</div>
+                        <div style="color: #fff; font-size: 0.85rem;">${result.counterfactual.data.flipped ? 'Step ' + result.counterfactual.data.flip_step : 'Not flipped'}</div>
+                    </div>
+                    <div style="padding: 12px; background: rgba(0,234,255,0.08); border: 1px solid rgba(0,234,255,0.2); border-radius: 10px; text-align: center;">
+                        <div style="color: rgba(255,255,255,0.6); font-size: 0.8rem; margin-bottom: 5px;">Pixels Changed</div>
+                        <div style="color: #00e5a0; font-weight: bold; font-size: 1.3rem;">${result.counterfactual.data.changed_pixels_pct}</div>
+                        <div style="color: #fff; font-size: 0.85rem;">of total scan</div>
+                    </div>
+                </div>
+                ` : ''}
+
+                <p class="explanation-text"><strong>Result:</strong> ${result.counterfactual.text}</p>
+
+                <div style="text-align: center; margin-top: 15px;">
+                    <img src="${result.counterfactual.image}" alt="Counterfactual Explanation"
+                         style="max-width: 700px; width: 100%; border-radius: 10px; border: 2px solid #00e5a0;">
+                </div>
+
+                <p class="explanation-text" style="margin-top: 15px; font-size: 0.9rem; opacity: 0.8;">
+                    <strong>How to read:</strong> Left panel = original scan with current diagnosis. Middle panel = change map showing which pixels were modified (brighter = more changed). Right panel = counterfactual scan with the new diagnosis.
+                    A small percentage of changed pixels means the two diagnoses are close — the model is near the decision boundary. A large percentage means the model is highly confident and the diagnoses are well-separated.
+                </p>
+                <p class="explanation-text" style="margin-top: 10px; font-size: 0.9rem; opacity: 0.8;">
+                    <strong>Clinical value:</strong> The change map highlights which brain regions are most critical for distinguishing between the two diagnoses. These regions represent the anatomical features the model uses as the primary decision boundary — typically the hippocampus and temporal lobes in Alzheimer's staging.
+                </p>
+            </div>
+            ` : ''}
+
+                <div style="padding: 15px; background: rgba(0,234,255,0.08); border-radius: 10px; border: 1px solid rgba(0,234,255,0.3);">
+                    <h4 style="color: #00eaff; margin-bottom: 10px;">🔄 Comparing All Methods</h4>
+                    <table style="width: 100%; border-collapse: collapse; font-size: 0.9rem;">
+                        <tr style="border-bottom: 1px solid rgba(0,234,255,0.3);">
+                            <th style="text-align: left; padding: 8px; color: #00eaff;">Method</th>
+                            <th style="text-align: left; padding: 8px; color: #00eaff;">What It Shows</th>
+                            <th style="text-align: left; padding: 8px; color: #00eaff;">Best Used For</th>
+                        </tr>
+                        <tr style="border-bottom: 1px solid rgba(0,234,255,0.1);">
+                            <td style="padding: 8px;">Grad-CAM++</td>
+                            <td style="padding: 8px;">Where the model "looks"</td>
+                            <td style="padding: 8px;">Quick visual validation</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid rgba(0,234,255,0.1);">
+                            <td style="padding: 8px;">LIME</td>
+                            <td style="padding: 8px;">Which regions matter most</td>
+                            <td style="padding: 8px;">Region-level explanation</td>
+                        </tr>
+                        <tr style="border-bottom: 1px solid rgba(0,234,255,0.1);">
+                            <td style="padding: 8px;">SHAP</td>
+                            <td style="padding: 8px;">Exact pixel contributions</td>
+                            <td style="padding: 8px;">Quantitative proof</td>
+                        </tr>
+                        <tr>
+                            <td style="padding: 8px;">Counterfactual</td>
+                            <td style="padding: 8px;">Decision boundary distance</td>
+                            <td style="padding: 8px;">Clinical confidence assessment</td>
+                        </tr>
+                    </table>
+                </div>
+            </div>
         `;
     }
 

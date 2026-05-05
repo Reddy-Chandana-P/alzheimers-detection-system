@@ -343,7 +343,7 @@ def generate_shap_explanation(model, image, class_names, background_samples=10):
 
 def generate_all_explanations(model, image, class_names):
     """
-    Runs both LIME and SHAP and returns results in a single dictionary.
+    Runs LIME, SHAP, and Counterfactual explanations.
     Called from server.py when the user enables advanced explainability.
     """
     explanations = {}
@@ -354,4 +354,196 @@ def generate_all_explanations(model, image, class_names):
     shap_img, shap_text = generate_shap_explanation(model, image, class_names, background_samples=5)
     explanations['shap'] = {'image': shap_img, 'text': shap_text}
 
+    cf_img, cf_text, cf_data = generate_counterfactual(model, image, class_names)
+    explanations['counterfactual'] = {'image': cf_img, 'text': cf_text, 'data': cf_data}
+
     return explanations
+
+
+# =============================================================================
+# COUNTERFACTUAL EXPLANATION
+# =============================================================================
+
+def generate_counterfactual(model, image, class_names, steps=200, lr=0.01):
+    """
+    Generate a counterfactual explanation by finding the minimal pixel-level
+    change to the input image that flips the model's prediction to a different class.
+
+    Answers: "What is the smallest change to this brain scan that would change
+    the diagnosis from X to Y?"
+
+    Method: Gradient-based iterative optimization.
+    Starting from the original image, we iteratively apply small gradient steps
+    that push the prediction toward the target class (the next most likely class),
+    while minimizing the total change to the image (L2 regularization).
+
+    Args:
+        model:       Trained Keras model
+        image:       Preprocessed image array of shape (1, 128, 128, 3)
+        class_names: List of class name strings
+        steps:       Number of optimization steps
+        lr:          Learning rate for gradient steps
+
+    Returns:
+        cf_image_base64: Base64-encoded PNG of the 3-panel visualization
+        explanation_text: HTML string describing the counterfactual
+        cf_data:         Dict with numeric results (confidence changes etc.)
+    """
+    try:
+        print("   Generating counterfactual explanation...")
+
+        # Get original prediction
+        orig_probs = model.predict(image, verbose=0)[0]
+        orig_class = np.argmax(orig_probs)
+        orig_confidence = float(orig_probs[orig_class])
+
+        # Target class = second most likely class
+        # This is the "nearest neighbor" in prediction space
+        sorted_classes = np.argsort(orig_probs)[::-1]
+        target_class = int(sorted_classes[1])
+        target_confidence_start = float(orig_probs[target_class])
+
+        print(f"   Original: {class_names[orig_class]} ({orig_confidence*100:.1f}%)")
+        print(f"   Target  : {class_names[target_class]} ({target_confidence_start*100:.1f}%)")
+
+        # Start from the original image
+        cf_image = tf.Variable(image.copy(), dtype=tf.float32)
+        original_image = tf.constant(image, dtype=tf.float32)
+
+        # Optimization loop — iteratively nudge the image toward the target class
+        flipped = False
+        flip_step = None
+
+        for step in range(steps):
+            with tf.GradientTape() as tape:
+                tape.watch(cf_image)
+                preds = model(cf_image)
+
+                # Loss = maximize target class probability
+                #      + minimize change from original (L2 regularization)
+                target_loss = -preds[0, target_class]
+                l2_loss     = 0.1 * tf.reduce_sum(tf.square(cf_image - original_image))
+                total_loss  = target_loss + l2_loss
+
+            # Compute gradient of loss w.r.t. the counterfactual image
+            grads = tape.gradient(total_loss, cf_image)
+
+            # Apply gradient step (gradient descent)
+            cf_image.assign_sub(lr * grads)
+
+            # Clip to valid image range [0, 1]
+            cf_image.assign(tf.clip_by_value(cf_image, 0.0, 1.0))
+
+            # Check if prediction has flipped
+            current_preds = model.predict(cf_image.numpy(), verbose=0)[0]
+            current_class = np.argmax(current_preds)
+
+            if current_class == target_class and not flipped:
+                flipped = True
+                flip_step = step + 1
+                print(f"   ✅ Prediction flipped at step {flip_step}")
+                break
+
+        # Get final counterfactual image and predictions
+        cf_array = cf_image.numpy()[0]
+        final_probs = model.predict(cf_image.numpy(), verbose=0)[0]
+        final_class = np.argmax(final_probs)
+        final_confidence = float(final_probs[final_class])
+
+        # Compute the difference map (what changed)
+        diff = np.abs(cf_array - image[0])
+        diff_sum = np.sum(diff, axis=-1)  # Sum across RGB channels
+        diff_normalized = (diff_sum - diff_sum.min()) / (diff_sum.max() - diff_sum.min() + 1e-8)
+
+        # Percentage of pixels that changed significantly (>1% change)
+        changed_pixels = int(np.sum(diff_sum > 0.03))
+        total_pixels = 128 * 128
+        change_pct = changed_pixels / total_pixels * 100
+
+        # =================================================================
+        # VISUALIZATION — 3 panels
+        # =================================================================
+
+        fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+        fig.patch.set_facecolor('#0a0a1a')
+
+        # Panel 1: Original image with original prediction
+        axes[0].imshow(image[0])
+        axes[0].set_title(
+            f'Original Scan\n"{class_names[orig_class]}" ({orig_confidence*100:.1f}%)',
+            fontsize=11, fontweight='bold', color='white'
+        )
+        axes[0].axis('off')
+
+        # Panel 2: Difference map — what changed
+        im = axes[1].imshow(diff_normalized, cmap='hot', vmin=0, vmax=1)
+        axes[1].set_title(
+            f'Change Map\n(Brighter = More Changed)',
+            fontsize=11, fontweight='bold', color='white'
+        )
+        axes[1].axis('off')
+        plt.colorbar(im, ax=axes[1], label='Change Magnitude')
+
+        # Panel 3: Counterfactual image with new prediction
+        axes[2].imshow(np.clip(cf_array, 0, 1))
+        axes[2].set_title(
+            f'Counterfactual Scan\n"{class_names[final_class]}" ({final_confidence*100:.1f}%)',
+            fontsize=11, fontweight='bold', color='white'
+        )
+        axes[2].axis('off')
+
+        for ax in axes:
+            ax.set_facecolor('#0a0a1a')
+
+        status = f"Flipped in {flip_step} steps" if flipped else f"Not flipped ({steps} steps)"
+        plt.suptitle(
+            f'Counterfactual: "{class_names[orig_class]}" → "{class_names[final_class]}" | {status}',
+            fontsize=12, fontweight='bold', color='#00eaff'
+        )
+        plt.tight_layout()
+
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', bbox_inches='tight', dpi=100, facecolor='#0a0a1a')
+        buf.seek(0)
+        cf_base64 = base64.b64encode(buf.read()).decode('utf-8')
+        plt.close()
+
+        # Build explanation text
+        if flipped:
+            explanation_text = (
+                f"The model's prediction was changed from <strong>'{class_names[orig_class]}'</strong> "
+                f"({orig_confidence*100:.1f}% confidence) to <strong>'{class_names[final_class]}'</strong> "
+                f"({final_confidence*100:.1f}% confidence) by modifying only "
+                f"<strong>{change_pct:.1f}% of pixels</strong> ({changed_pixels} out of {total_pixels}). "
+                f"This was achieved in <strong>{flip_step} optimization steps</strong>. "
+                f"The change map (middle panel) shows which brain regions needed to be altered — "
+                f"brighter areas required more modification, indicating these are the most critical "
+                f"regions distinguishing the two diagnoses."
+            )
+        else:
+            explanation_text = (
+                f"After {steps} optimization steps, the prediction remained "
+                f"<strong>'{class_names[orig_class]}'</strong> ({orig_confidence*100:.1f}% confidence). "
+                f"The model moved toward <strong>'{class_names[final_class]}'</strong> "
+                f"({final_confidence*100:.1f}%) but did not fully flip. "
+                f"This indicates a <strong>high-confidence prediction</strong> — the model is very certain "
+                f"about this diagnosis and requires substantial brain structure changes to reconsider it. "
+                f"Approximately <strong>{change_pct:.1f}% of pixels</strong> were modified in the attempt."
+            )
+
+        cf_data = {
+            'original_class': class_names[orig_class],
+            'original_confidence': f"{orig_confidence*100:.1f}%",
+            'target_class': class_names[target_class],
+            'final_class': class_names[final_class],
+            'final_confidence': f"{final_confidence*100:.1f}%",
+            'flipped': flipped,
+            'flip_step': flip_step,
+            'changed_pixels_pct': f"{change_pct:.1f}%"
+        }
+
+        return f"data:image/png;base64,{cf_base64}", explanation_text, cf_data
+
+    except Exception as e:
+        print(f"   Counterfactual error: {e}")
+        return None, f"Counterfactual explanation failed: {str(e)}", {}
